@@ -5,7 +5,7 @@ on:
     types: [published]
 
 jobs:
-  convert-zip-game:
+  convert-xo-game:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -14,26 +14,40 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full python2.7 lua5.3 zip
+          sudo apt-get install -y p7zip-full unzip python2.7 lua5.3 zip
 
-      - name: Find and extract 7z game file
+      - name: Extract .7z archive
         run: |
-          # Busca el primer archivo .7z en la raíz del repo (puedes ajustar la ruta si lo necesitas)
           GAME_7Z=$(ls *.7z | head -n 1)
           if [ -z "$GAME_7Z" ]; then
             echo "No se encontró archivo .7z"
             exit 1
           fi
-          mkdir extracted_game
-          7z x "$GAME_7Z" -oextracted_game
+          mkdir extracted_7z
+          7z x "$GAME_7Z" -oextracted_7z
 
-      - name: Detect game type
+      - name: Find and extract .xo file from .7z
+        run: |
+          XO_FILE=$(find extracted_7z -type f -name "*.xo" | head -n 1)
+          if [ -z "$XO_FILE" ]; then
+            echo "No se encontró archivo .xo dentro del .7z"
+            exit 1
+          fi
+          mkdir extracted_xo
+          unzip "$XO_FILE" -d extracted_xo
+
+      - name: Detect game type inside .xo
         id: detect
         run: |
-          if ls extracted_game/*.py 1> /dev/null 2>&1; then
+          # Busca main.py o main.lua o cualquier archivo relevante
+          if ls extracted_xo/*.py 1> /dev/null 2>&1; then
+            MAIN_FILE=$(ls extracted_xo/*.py | head -n 1)
             echo "type=python" >> $GITHUB_OUTPUT
-          elif ls extracted_game/*.lua 1> /dev/null 2>&1; then
+            echo "main_file=$MAIN_FILE" >> $GITHUB_OUTPUT
+          elif ls extracted_xo/*.lua 1> /dev/null 2>&1; then
+            MAIN_FILE=$(ls extracted_xo/*.lua | head -n 1)
             echo "type=lua" >> $GITHUB_OUTPUT
+            echo "main_file=$MAIN_FILE" >> $GITHUB_OUTPUT
           else
             echo "type=unknown" >> $GITHUB_OUTPUT
           fi
@@ -42,12 +56,12 @@ jobs:
         if: steps.detect.outputs.type == 'python'
         run: |
           mkdir web_game
-          cp -r extracted_game/* web_game/
+          cp -r extracted_xo/* web_game/
           echo '<html><head><script src="https://cdn.jsdelivr.net/pyodide/v0.24.0/full/pyodide.js"></script></head><body>' > web_game/index.html
           echo '<div id="output"></div><script>' >> web_game/index.html
           echo 'async function main() {' >> web_game/index.html
           echo '  let pyodide = await loadPyodide();' >> web_game/index.html
-          echo '  let code = await (await fetch("main.py")).text();' >> web_game/index.html
+          echo "  let code = await (await fetch('$(basename $MAIN_FILE)')).text();" >> web_game/index.html
           echo '  let result = await pyodide.runPythonAsync(code);' >> web_game/index.html
           echo '  document.getElementById("output").innerText = result;' >> web_game/index.html
           echo '}; main();</script></body></html>' >> web_game/index.html
@@ -56,10 +70,10 @@ jobs:
         if: steps.detect.outputs.type == 'lua'
         run: |
           mkdir web_game
-          cp -r extracted_game/* web_game/
+          cp -r extracted_xo/* web_game/
           echo '<html><head><script src="https://unpkg.com/fengari-web/dist/fengari-web.js"></script></head><body>' > web_game/index.html
           echo '<div id="output"></div><script type="application/lua">' >> web_game/index.html
-          cat extracted_game/main.lua >> web_game/index.html
+          cat "$MAIN_FILE" >> web_game/index.html
           echo '</script></body></html>' >> web_game/index.html
 
       - name: Fallback for unknown type
@@ -79,4 +93,3 @@ jobs:
         with:
           name: web_game
           path: web_game.zip
-          
