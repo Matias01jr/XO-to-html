@@ -1,15 +1,11 @@
-name: XO Game Converter
+name: XO Game Web Converter
 
 on:
-  workflow_dispatch:
-    inputs:
-      xo_file:
-        description: 'Ruta al archivo .xo a convertir'
-        required: true
-        type: string
+  release:
+    types: [published]
 
 jobs:
-  convert-xo-game:
+  convert-zip-game:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -18,30 +14,35 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y unzip python2.7 lua5.3
+          sudo apt-get install -y p7zip-full python2.7 lua5.3 zip
 
-      - name: Extract .xo file
+      - name: Find and extract 7z game file
         run: |
-          mkdir extracted_xo
-          unzip "${{ github.event.inputs.xo_file }}" -d extracted_xo
+          # Busca el primer archivo .7z en la raíz del repo (puedes ajustar la ruta si lo necesitas)
+          GAME_7Z=$(ls *.7z | head -n 1)
+          if [ -z "$GAME_7Z" ]; then
+            echo "No se encontró archivo .7z"
+            exit 1
+          fi
+          mkdir extracted_game
+          7z x "$GAME_7Z" -oextracted_game
 
-      - name: Inspect XO game type
+      - name: Detect game type
         id: detect
         run: |
-          if ls extracted_xo/*.py 1> /dev/null 2>&1; then
+          if ls extracted_game/*.py 1> /dev/null 2>&1; then
             echo "type=python" >> $GITHUB_OUTPUT
-          elif ls extracted_xo/*.lua 1> /dev/null 2>&1; then
+          elif ls extracted_game/*.lua 1> /dev/null 2>&1; then
             echo "type=lua" >> $GITHUB_OUTPUT
           else
             echo "type=unknown" >> $GITHUB_OUTPUT
           fi
 
-      - name: Convert Python 2.7 game to HTML/JS (Pyodide)
+      - name: Convert Python Game to Web (Pyodide)
         if: steps.detect.outputs.type == 'python'
         run: |
           mkdir web_game
-          cp -r extracted_xo/* web_game/
-          # Empaquetar el juego Python usando Pyodide
+          cp -r extracted_game/* web_game/
           echo '<html><head><script src="https://cdn.jsdelivr.net/pyodide/v0.24.0/full/pyodide.js"></script></head><body>' > web_game/index.html
           echo '<div id="output"></div><script>' >> web_game/index.html
           echo 'async function main() {' >> web_game/index.html
@@ -51,31 +52,30 @@ jobs:
           echo '  document.getElementById("output").innerText = result;' >> web_game/index.html
           echo '}; main();</script></body></html>' >> web_game/index.html
 
-      - name: Convert Lua game to HTML/JS (fengari)
+      - name: Convert Lua Game to Web (Fengari)
         if: steps.detect.outputs.type == 'lua'
         run: |
           mkdir web_game
-          cp -r extracted_xo/* web_game/
-          # Empaquetar el juego Lua usando Fengari
+          cp -r extracted_game/* web_game/
           echo '<html><head><script src="https://unpkg.com/fengari-web/dist/fengari-web.js"></script></head><body>' > web_game/index.html
           echo '<div id="output"></div><script type="application/lua">' >> web_game/index.html
-          cat extracted_xo/main.lua >> web_game/index.html
+          cat extracted_game/main.lua >> web_game/index.html
           echo '</script></body></html>' >> web_game/index.html
 
       - name: Fallback for unknown type
         if: steps.detect.outputs.type == 'unknown'
         run: |
-          echo "Tipo de juego no soportado. Sólo se aceptan juegos en Python 2.7 o Lua."
+          echo "Tipo de juego no soportado (solo Python 2.7 o Lua)"
           exit 1
 
-      - name: Package game as zip
+      - name: Package web game as zip
         run: |
           cd web_game
-          zip -r ../xo_game_web.zip .
+          zip -9 -r ../web_game.zip .
         shell: bash
 
-      - name: Upload zip artifact
+      - name: Upload web game zip artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xo_game_web
-          path: xo_game_web.zip
+          name: web_game
+          path: web_game.zip
